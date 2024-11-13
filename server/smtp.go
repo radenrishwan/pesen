@@ -21,6 +21,7 @@ const (
 const (
 	SMTP_COMMAND_HELO = "HELO"
 	SMTP_COMMAND_EHLO = "EHLO"
+	SMTP_COMMAND_AUTH = "AUTH"
 	SMTP_COMMAND_MAIL = "MAIL"
 	SMTP_COMMAND_RCPT = "RCPT"
 	SMTP_COMMAND_DATA = "DATA"
@@ -30,12 +31,21 @@ const (
 )
 
 type Server struct {
-	address string
+	address   string
+	auth      bool
+	smtpAuths map[string]*SMTPAuth
 }
 
-func NewServer(address string) *Server {
+func NewServer(address string, auth bool) *Server {
+	// add dummy auth
+	smtpAuths := make(map[string]*SMTPAuth)
+	smtpAuths["test"] = NewSMTPAuth("test", "test")
+	smtpAuths["test2"] = NewSMTPAuth("test2", "test2")
+
 	return &Server{
-		address: address,
+		address:   address,
+		auth:      true,
+		smtpAuths: smtpAuths,
 	}
 }
 
@@ -70,7 +80,6 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	mail := NewMail()
 
-	// print reader
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -86,22 +95,60 @@ func (s *Server) handleConnection(conn net.Conn) {
 		if strings.HasPrefix(strings.ToUpper(command.Command), SMTP_COMMAND_HELO) {
 			reply(writer, SMTP_STATUS_OK, "HELO from server")
 
+			// implement auth here
+
 			continue
 		}
 
 		if strings.HasPrefix(strings.ToUpper(command.Command), SMTP_COMMAND_EHLO) {
 			reply(writer, SMTP_STATUS_OK, "EHLO from server")
 
+			// implement auth here
+
+			continue
+		}
+
+		if strings.HasPrefix(strings.ToUpper(command.Command), SMTP_COMMAND_AUTH) {
+			if !s.auth {
+				reply(writer, SMTP_STATUS_ERROR_SYNTAX, "Authentication not enabled")
+				continue
+			}
+
+			// reply 235 Authentication successful
+			reply(writer, SMTP_STATUS_OK, "Authentication successful")
+
+			// TODO: implement later
+
 			continue
 		}
 
 		if strings.HasPrefix(strings.ToUpper(command.Command), SMTP_COMMAND_MAIL) {
+			if len(command.Args) == 0 {
+				reply(writer, SMTP_STATUS_ERROR_SYNTAX, "MAIL command requires an argument")
+				continue
+			}
+
+			s := strings.Split(command.Args[0], ":")
+			r := strings.NewReplacer("<", "", ">", "")
+
+			mail.SetFrom(r.Replace(s[1]))
+
 			reply(writer, SMTP_STATUS_OK, "MAIL command accepted")
 
 			continue
 		}
 
 		if strings.HasPrefix(strings.ToUpper(command.Command), SMTP_COMMAND_RCPT) {
+			if len(command.Args) == 0 {
+				reply(writer, SMTP_STATUS_ERROR_SYNTAX, "RCPT command requires an argument")
+				continue
+			}
+
+			s := strings.Split(command.Args[0], ":")
+			r := strings.NewReplacer("<", "", ">", "")
+
+			mail.AddTo(r.Replace(s[1]))
+
 			reply(writer, SMTP_STATUS_OK, "RCPT command accepted")
 
 			continue
@@ -154,57 +201,38 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		if strings.HasPrefix(strings.ToUpper(command.Command), SMTP_COMMAND_QUIT) {
+			fmt.Println(mail)
+
 			reply(writer, SMTP_STATUS_BYE, "Dadah!")
 			return
 		}
 	}
 }
 
-type Command struct {
-	Command string
-	Args    []string
-}
-
-func (c *Command) Parse(line string) {
-	parts := strings.Fields(line)
-
-	// check if parts is empty
-	if len(parts) == 0 {
-		return
-	}
-
-	c.Command = strings.ToUpper(parts[0])
-
-	c.Args = parts[1:]
-}
-
-type Mail struct {
-	Header map[string]string
-	Body   string
-}
-
-func NewMail() Mail {
-	return Mail{
-		Header: make(map[string]string),
-	}
-}
-
-func (m *Mail) Parse(data string) {
-	lines := strings.Split(data, "\r\n")
-
-	for i, line := range lines {
-		if line == "" {
-			m.Body = strings.Join(lines[i+1:], "\r\n")
-			break
+func (s *Server) validateAuth(username string, password string) error {
+	if s.auth {
+		for _, auth := range s.smtpAuths {
+			if auth.Username == username && auth.Password == password {
+				return nil
+			}
 		}
 
-		parts := strings.SplitN(line, ":", 2)
-		m.Header[parts[0]] = strings.TrimSpace(parts[1])
 	}
+
+	return nil
 }
 
 func reply(writer *bufio.Writer, code int, message string) {
 	response := fmt.Sprintf("%d %s\r\n", code, message)
+
+	writer.WriteString(response)
+	writer.Flush()
+
+	fmt.Println("Server:", strings.TrimSpace(response))
+}
+
+func replyAuth(writer *bufio.Writer, code int, message string) {
+	response := fmt.Sprintf("%d-%s\r\n", code, message)
 
 	writer.WriteString(response)
 	writer.Flush()

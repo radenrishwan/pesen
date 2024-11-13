@@ -14,7 +14,7 @@ var (
 func main() {
 	flag.Parse()
 
-	s := server.NewServer(*PORT)
+	s := server.NewServer(*PORT, true)
 
 	if err := s.ListenAndServe(); err != nil {
 		log.Fatal(err)
