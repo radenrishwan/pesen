@@ -7,42 +7,9 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+
+	server "github.com/radenrishwan/smtp-from-scratch"
 )
-
-const (
-	SMTP_STATUS_READY                      = 220
-	SMTP_STATUS_BYE                        = 221
-	SMTP_STATUS_OK                         = 250
-	SMTP_STATUS_SEND_DATA                  = 354
-	SMTP_STATUS_ERROR_COMMAND_UNRECOGNIZED = 500
-	SMTP_STATUS_ERROR_SYNTAX               = 501
-	SMTP_STATUS_ERROR_BAD_SEQUENCE         = 503
-)
-
-const (
-	SMTP_COMMAND_HELO = "HELO"
-	SMTP_COMMAND_EHLO = "EHLO"
-	SMTP_COMMAND_MAIL = "MAIL"
-	SMTP_COMMAND_RCPT = "RCPT"
-	SMTP_COMMAND_DATA = "DATA"
-	SMTP_COMMAND_RSET = "RSET"
-	SMTP_COMMAND_NOOP = "NOOP"
-	SMTP_COMMAND_QUIT = "QUIT"
-)
-
-type SMTPSession struct {
-	sender     string
-	recipients []string
-	dataBuffer strings.Builder
-	state      string
-}
-
-func (self *SMTPSession) Reset() {
-	self.sender = ""
-	self.recipients = nil
-	self.dataBuffer.Reset()
-	self.state = ""
-}
 
 var (
 	PORT = flag.String("port", "2525", "Port to run the SMTP server on. Default is 2525")
@@ -62,6 +29,9 @@ func main() {
 
 	for {
 		conn, err := ln.Accept()
+
+		fmt.Println("Connection accepted")
+
 		if err != nil {
 			slog.Error("Error accepting connection", "ERROR", err.Error())
 			continue
@@ -76,12 +46,11 @@ func handleConnection(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
 
-	reply(writer, SMTP_STATUS_READY, "SMTP Ready")
+	reply(writer, server.SMTP_STATUS_READY, "Service ready")
 
-	session := SMTPSession{
-		state: "",
-	}
+	mail := NewMail()
 
+	// print reader
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -89,70 +58,136 @@ func handleConnection(conn net.Conn) {
 			return
 		}
 
-		// print the client message
-		line = strings.TrimSpace(line)
-		fmt.Println("Client:", line)
+		command := Command{}
+		command.Parse(line)
 
-		switch session.state {
-		case SMTP_COMMAND_DATA:
-			if line == "." {
-				fmt.Println("Email Data Received:")
-				fmt.Println("From:", session.sender)
-				fmt.Println("To:", session.recipients)
-				fmt.Println(session.dataBuffer.String())
+		fmt.Println("Client:", strings.TrimSpace(line))
 
-				session.Reset()
+		if strings.HasPrefix(strings.ToUpper(command.Command), server.SMTP_COMMAND_HELO) {
+			reply(writer, server.SMTP_STATUS_OK, "HELO from server")
 
-				reply(writer, SMTP_STATUS_OK, "OK: Message accepted for delivery")
-			} else {
-				session.dataBuffer.WriteString(line + "\r\n")
-			}
-		default:
-			if strings.HasPrefix(strings.ToUpper(line), SMTP_COMMAND_HELO) {
-				reply(writer, SMTP_STATUS_OK, "Hello")
-			} else if strings.HasPrefix(strings.ToUpper(line), SMTP_COMMAND_EHLO) {
-				reply(writer, SMTP_STATUS_OK, "Hello")
-			} else if strings.HasPrefix(strings.ToUpper(line), SMTP_COMMAND_MAIL) {
-				session.sender = parseAddress(line[10:])
-
-				fmt.Println("MAIL FROM:", session.sender)
-
-				reply(writer, SMTP_STATUS_OK, "OK")
-			} else if strings.HasPrefix(strings.ToUpper(line), SMTP_COMMAND_RCPT) {
-				recipient := parseAddress(line[8:])
-				session.recipients = append(session.recipients, recipient)
-
-				fmt.Println("RCPT TO:", recipient)
-
-				reply(writer, SMTP_STATUS_OK, "OK")
-			} else if strings.ToUpper(line) == SMTP_COMMAND_DATA {
-				if session.sender == "" || len(session.recipients) == 0 {
-					reply(writer, SMTP_STATUS_ERROR_BAD_SEQUENCE, "Bad sequence of commands")
-				} else {
-					reply(writer, SMTP_STATUS_SEND_DATA, "End data with <CR><LF>.<CR><LF>")
-
-					session.state = "DATA"
-				}
-			} else if strings.ToUpper(line) == SMTP_COMMAND_QUIT {
-				reply(writer, SMTP_STATUS_BYE, "Bye")
-
-				return
-			} else {
-				reply(writer, SMTP_STATUS_ERROR_COMMAND_UNRECOGNIZED, "Syntax error, command unrecognized")
-			}
+			continue
 		}
+
+		if strings.HasPrefix(strings.ToUpper(command.Command), server.SMTP_COMMAND_EHLO) {
+			reply(writer, server.SMTP_STATUS_OK, "EHLO from server")
+
+			continue
+		}
+
+		if strings.HasPrefix(strings.ToUpper(command.Command), server.SMTP_COMMAND_MAIL) {
+			reply(writer, server.SMTP_STATUS_OK, "MAIL command accepted")
+
+			continue
+		}
+
+		if strings.HasPrefix(strings.ToUpper(command.Command), server.SMTP_COMMAND_RCPT) {
+			reply(writer, server.SMTP_STATUS_OK, "RCPT command accepted")
+
+			continue
+		}
+
+		if strings.HasPrefix(strings.ToUpper(command.Command), server.SMTP_COMMAND_DATA) {
+			reply(writer, server.SMTP_STATUS_SEND_DATA, "End data with <CR><LF>.<CR><LF>")
+
+			data := ""
+
+			for {
+				line, err := reader.ReadString('\n')
+
+				fmt.Println("Client:", strings.TrimSpace(line))
+
+				if err != nil {
+					slog.Error("Error reading from connection", "ERROR", err.Error())
+					return
+				}
+
+				if strings.TrimSpace(line) == "." {
+					break
+				}
+
+				data += line
+			}
+
+			mail.Parse(data)
+
+			reply(writer, server.SMTP_STATUS_OK, "Mail accepted")
+
+			continue
+		}
+
+		if strings.HasPrefix(strings.ToUpper(command.Command), server.SMTP_COMMAND_RSET) {
+			reply(writer, server.SMTP_STATUS_OK, "Resetting")
+
+			mail = NewMail()
+
+			// clear the reader
+			reader.Reset(conn)
+
+			continue
+		}
+
+		if strings.HasPrefix(strings.ToUpper(command.Command), server.SMTP_COMMAND_NOOP) {
+			reply(writer, server.SMTP_STATUS_OK, "Server is here...")
+
+			continue
+		}
+
+		if strings.HasPrefix(strings.ToUpper(command.Command), server.SMTP_COMMAND_QUIT) {
+			reply(writer, server.SMTP_STATUS_BYE, "Dadah!")
+			return
+		}
+	}
+}
+
+type Command struct {
+	Command string
+	Args    []string
+}
+
+func (c *Command) Parse(line string) {
+	parts := strings.Fields(line)
+
+	// check if parts is empty
+	if len(parts) == 0 {
+		return
+	}
+
+	c.Command = strings.ToUpper(parts[0])
+
+	c.Args = parts[1:]
+}
+
+type Mail struct {
+	Header map[string]string
+	Body   string
+}
+
+func NewMail() Mail {
+	return Mail{
+		Header: make(map[string]string),
+	}
+}
+
+func (m *Mail) Parse(data string) {
+	lines := strings.Split(data, "\r\n")
+
+	for i, line := range lines {
+		if line == "" {
+			m.Body = strings.Join(lines[i+1:], "\r\n")
+			break
+		}
+
+		parts := strings.SplitN(line, ":", 2)
+		m.Header[parts[0]] = strings.TrimSpace(parts[1])
 	}
 }
 
 func reply(writer *bufio.Writer, code int, message string) {
 	response := fmt.Sprintf("%d %s\r\n", code, message)
+
 	writer.WriteString(response)
 	writer.Flush()
-	fmt.Println("Server:", strings.TrimSpace(response))
-}
 
-func parseAddress(address string) string {
-	address = strings.TrimSpace(address)
-	address = strings.Trim(address, "<>")
-	return address
+	fmt.Println("Server:", strings.TrimSpace(response))
 }
