@@ -5,4 +5,4 @@ video : `soon`
 ##### TODO:
 - [x] SMTP server
 - [ ] SMTP client (still using a std for example)
-- [ ] Authentication
+- [x] Authentication
