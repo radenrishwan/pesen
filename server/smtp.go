@@ -16,6 +16,8 @@ const (
 	SMTP_STATUS_ERROR_COMMAND_UNRECOGNIZED = 500
 	SMTP_STATUS_ERROR_SYNTAX               = 501
 	SMTP_STATUS_ERROR_BAD_SEQUENCE         = 503
+
+	SMTP_STATUS_AUTH_SUCCESS = 235
 )
 
 const (
@@ -44,9 +46,18 @@ func NewServer(address string, auth bool) *Server {
 
 	return &Server{
 		address:   address,
-		auth:      true,
+		auth:      auth,
 		smtpAuths: smtpAuths,
 	}
+}
+
+func (s *Server) ValidateAuth(username, password string) bool {
+	auth, ok := s.smtpAuths[username]
+	if !ok {
+		return false
+	}
+
+	return auth.Password == password
 }
 
 func (s *Server) ListenAndServe() error {
@@ -92,100 +103,50 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 		fmt.Println("Client:", strings.TrimSpace(line))
 
-		if strings.HasPrefix(strings.ToUpper(command.Command), SMTP_COMMAND_HELO) {
-			reply(writer, SMTP_STATUS_OK, "HELO from server")
+		if strings.HasPrefix(strings.ToUpper(command.Command), "*") {
+			handleEhlo(writer, s)
 
-			// implement auth here
+			continue
+		}
+
+		if strings.HasPrefix(strings.ToUpper(command.Command), SMTP_COMMAND_HELO) {
+			handleHelo(writer, s)
 
 			continue
 		}
 
 		if strings.HasPrefix(strings.ToUpper(command.Command), SMTP_COMMAND_EHLO) {
-			reply(writer, SMTP_STATUS_OK, "EHLO from server")
-
-			// implement auth here
+			handleEhlo(writer, s)
 
 			continue
 		}
 
 		if strings.HasPrefix(strings.ToUpper(command.Command), SMTP_COMMAND_AUTH) {
-			if !s.auth {
-				reply(writer, SMTP_STATUS_ERROR_SYNTAX, "Authentication not enabled")
-				continue
-			}
-
-			// reply 235 Authentication successful
-			reply(writer, SMTP_STATUS_OK, "Authentication successful")
-
-			// TODO: implement later
+			handleAuth(writer, s, command)
 
 			continue
 		}
 
 		if strings.HasPrefix(strings.ToUpper(command.Command), SMTP_COMMAND_MAIL) {
-			if len(command.Args) == 0 {
-				reply(writer, SMTP_STATUS_ERROR_SYNTAX, "MAIL command requires an argument")
-				continue
-			}
-
-			s := strings.Split(command.Args[0], ":")
-			r := strings.NewReplacer("<", "", ">", "")
-
-			mail.SetFrom(r.Replace(s[1]))
-
-			reply(writer, SMTP_STATUS_OK, "MAIL command accepted")
+			handleMail(writer, &mail, command)
 
 			continue
 		}
 
 		if strings.HasPrefix(strings.ToUpper(command.Command), SMTP_COMMAND_RCPT) {
-			if len(command.Args) == 0 {
-				reply(writer, SMTP_STATUS_ERROR_SYNTAX, "RCPT command requires an argument")
-				continue
-			}
-
-			s := strings.Split(command.Args[0], ":")
-			r := strings.NewReplacer("<", "", ">", "")
-
-			mail.AddTo(r.Replace(s[1]))
-
-			reply(writer, SMTP_STATUS_OK, "RCPT command accepted")
+			handleRcpt(writer, &mail, command)
 
 			continue
 		}
 
 		if strings.HasPrefix(strings.ToUpper(command.Command), SMTP_COMMAND_DATA) {
-			reply(writer, SMTP_STATUS_SEND_DATA, "End data with <CR><LF>.<CR><LF>")
-
-			data := ""
-
-			for {
-				line, err := reader.ReadString('\n')
-
-				fmt.Println("Client:", strings.TrimSpace(line))
-
-				if err != nil {
-					slog.Error("Error reading from connection", "ERROR", err.Error())
-					return
-				}
-
-				if strings.TrimSpace(line) == "." {
-					break
-				}
-
-				data += line
-			}
-
-			mail.Parse(data)
-
-			reply(writer, SMTP_STATUS_OK, "Mail accepted")
+			handleData(writer, reader, &mail)
 
 			continue
 		}
 
 		if strings.HasPrefix(strings.ToUpper(command.Command), SMTP_COMMAND_RSET) {
-			reply(writer, SMTP_STATUS_OK, "Resetting")
-
+			handleRset(writer)
 			mail = NewMail()
 
 			// clear the reader
@@ -201,9 +162,8 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 
 		if strings.HasPrefix(strings.ToUpper(command.Command), SMTP_COMMAND_QUIT) {
-			fmt.Println(mail)
+			handleQuit(writer, &mail)
 
-			reply(writer, SMTP_STATUS_BYE, "Dadah!")
 			return
 		}
 	}
@@ -238,4 +198,17 @@ func replyAuth(writer *bufio.Writer, code int, message string) {
 	writer.Flush()
 
 	fmt.Println("Server:", strings.TrimSpace(response))
+}
+
+func replyMultiLine(writer *bufio.Writer, code int, messages []string) {
+	for i, msg := range messages {
+		var response string
+		if i == len(messages)-1 {
+			response = fmt.Sprintf("%d %s\r\n", code, msg)
+		} else {
+			response = fmt.Sprintf("%d-%s\r\n", code, msg)
+		}
+		writer.WriteString(response)
+	}
+	writer.Flush()
 }
