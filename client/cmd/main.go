@@ -22,9 +22,16 @@ func main() {
 			body + CRLF,
 	)
 
+	auth := smtp.PlainAuth("",
+		"test",
+		"test",
+		"localhost",
+	)
+
 	err := smtp.SendMail(
 		serverAddress,
-		nil,
+		auth,
+		// nil,
 		from,
 		to,
 		message,
