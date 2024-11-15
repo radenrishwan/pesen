@@ -5,8 +5,8 @@ type SMTPAuth struct {
 	Password string
 }
 
-func NewSMTPAuth(username, password string) *SMTPAuth {
-	return &SMTPAuth{
+func NewSMTPAuth(username, password string) SMTPAuth {
+	return SMTPAuth{
 		Username: username,
 		Password: password,
 	}

@@ -35,12 +35,12 @@ const (
 type Server struct {
 	address   string
 	auth      bool
-	smtpAuths map[string]*SMTPAuth
+	smtpAuths map[string]SMTPAuth
 }
 
 func NewServer(address string, auth bool) *Server {
 	// add dummy auth
-	smtpAuths := make(map[string]*SMTPAuth)
+	smtpAuths := make(map[string]SMTPAuth)
 	smtpAuths["test"] = NewSMTPAuth("test", "test")
 	smtpAuths["test2"] = NewSMTPAuth("test2", "test2")
 
