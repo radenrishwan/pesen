@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"log"
 
 	"github.com/knadh/go-pop3"
@@ -51,6 +52,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Println("Message body:", msg.Body)
-	log.Println("Message header:", msg.Header)
+	b, _ := io.ReadAll(msg.Body)
+	log.Println("Message body: ", string(b))
+	log.Println("Message Header: ", msg.Header.Map())
 }

@@ -95,7 +95,7 @@ func (m Mail) String() string {
 	}
 
 	// add body
-	result += fmt.Sprintf("%s\r\n", m.Body)
+	result += fmt.Sprintf("\r\n%s\r\n", m.Body)
 
 	return result
 }

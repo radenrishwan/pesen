@@ -258,7 +258,7 @@ func handleConnection(conn net.Conn) {
 
 			mail := dummyMail[index-1]
 
-			reply(conn, OK, string(rune(mail.Size())))
+			reply(conn, OK, strconv.Itoa(mail.Size()))
 
 			replyWithoutStatus(conn, mail.String())
 			replyWithoutStatus(conn, ".")
@@ -267,10 +267,43 @@ func handleConnection(conn net.Conn) {
 
 			continue
 		case POP3_COMMAND_DELE:
+			if !state.isAuthenticated {
+				reply(conn, ERR, "Not authenticated")
+
+				continue
+			}
+
+			index, err := strconv.Atoi(command.Args)
+			if err != nil {
+				reply(conn, ERR, "Invalid message number")
+
+				continue
+			}
+
+			if index < 1 || index > len(dummyMail) {
+				reply(conn, ERR, "No such message")
+
+				continue
+			}
+
+			dummyMail = append(dummyMail[:index-1], dummyMail[index:]...)
+
+			reply(conn, OK, "Message deleted")
 		case POP3_COMMAND_RSET:
+			if !state.isAuthenticated {
+				reply(conn, ERR, "Not authenticated")
+			}
+
+			// clear all buffer and state
+			state = NewSessionState()
 		case POP3_COMMAND_QUIT:
+			reply(conn, OK, "Bye")
+
+			break
 		default:
 			reply(conn, ERR, "Unknown command")
+
+			continue
 		}
 	}
 
@@ -282,7 +315,7 @@ func handleConnection(conn net.Conn) {
 func reply(conn net.Conn, status string, message string) {
 	fmt.Fprintf(conn, "%s %s\r\n", status, message)
 
-	log.Printf("Server: %s %s", status, message)
+	log.Printf("Server: %s %s\r\n", status, message)
 }
 
 func replyWithoutStatus(conn net.Conn, message string) {
