@@ -34,4 +34,23 @@ func main() {
 	}
 
 	log.Printf("You have %d messages with a total size of %d bytes\n", n, size)
+
+	// List
+	list, err := conn.List(0)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, l := range list {
+		log.Printf("Message %d has a size of %d bytes\n", l.ID, l.Size)
+	}
+
+	// Retrieve
+	msg, err := conn.Retr(1)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Println("Message body:", msg.Body)
+	log.Println("Message header:", msg.Header)
 }

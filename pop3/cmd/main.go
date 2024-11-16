@@ -35,6 +35,33 @@ type Command struct {
 	Args    string
 }
 
+var dummyMail = []*pop3.Mail{
+	pop3.NewMail().
+		SetFrom("raden@gmail.com").
+		SetTo("agus@gmail.com").
+		SetSubject("Sample mail 1").
+		SetBody("This is a sample mail 1").
+		AddHeader("Date", "2020-01-01").
+		AddHeader("From", "raden@gmail.com").
+		AddHeader("To", "agus@gmail.com"),
+	pop3.NewMail().
+		SetFrom("raden@gmail.com").
+		SetTo("agus@gmail.com").
+		SetSubject("Sample mail 2").
+		SetBody("This is a sample mail 2").
+		AddHeader("Date", "2020-01-02").
+		AddHeader("From", "raden@gmail.com").
+		AddHeader("To", "agus@gmail.com"),
+	pop3.NewMail().
+		SetFrom("raden@gmail.com").
+		SetTo("acep@gmail.com").
+		SetSubject("Sample mail 3").
+		SetBody("This is a sample mail 3").
+		AddHeader("Date", "2020-01-03").
+		AddHeader("From", "raden@gmail.com").
+		AddHeader("To", "acep@gmail.com"),
+}
+
 func (c *Command) Parse(line string) error {
 	parts := strings.Fields(line)
 	if len(parts) == 0 {
@@ -109,9 +136,8 @@ func handleConnection(conn net.Conn) {
 
 	state := NewSessionState()
 	scanner := bufio.NewScanner(conn)
-	writer := bufio.NewWriter(conn)
 
-	fmt.Fprintf(writer, "+OK POP3 server ready\r\n")
+	reply(conn, OK, "POP3 server ready")
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -119,14 +145,12 @@ func handleConnection(conn net.Conn) {
 		command := Command{}
 		err := command.Parse(line)
 		if err != nil {
-			writer.WriteString(ERR + " " + err.Error() +
-				"\r\n")
+			reply(conn, ERR, err.Error())
+
 			continue
 		}
 
-		if command.Command != "" {
-			log.Println("Client:", strings.TrimSpace(line))
-		}
+		log.Println("Client:", strings.TrimSpace(line))
 
 		if state.shouldQuit {
 			log.Println("Closing connection")
@@ -136,59 +160,143 @@ func handleConnection(conn net.Conn) {
 		switch strings.ToUpper(command.Command) {
 		case POP3_COMMAND_USER:
 			if state.isAuthenticated {
-				writer.WriteString(ERR + " Already authenticated\r\n")
-				continue
-			}
+				reply(conn, ERR, "Already authenticated")
 
-			if command.Args == "" {
-				writer.WriteString(ERR + " Missing username\r\n")
 				continue
 			}
 
 			state.username = command.Args
 
-			writer.WriteString(OK + " User accepted\r\n")
+			reply(conn, OK, "User accepted")
 		case POP3_COMMAND_PASS:
 			if state.isAuthenticated {
-				writer.WriteString(ERR + " Already authenticated\r\n")
+				reply(conn, OK, "Already authenticated")
+
 				continue
 			}
 
 			if command.Args == "" {
-				writer.WriteString(ERR + " Missing password\r\n")
+				reply(conn, ERR, "Missing password")
+
 				continue
 			}
 
 			if !validateAuth(state.username, command.Args) {
-				writer.WriteString(ERR + " Invalid username or password\r\n")
+				reply(conn, ERR, "Invalid username or password")
+
 				continue
 			}
+
+			state.isAuthenticated = true
+
+			reply(conn, OK, "Authenticated")
 		case POP3_COMMAND_STAT:
 			if !state.isAuthenticated {
-				writer.WriteString(ERR + " Not authenticated\r\n")
+				reply(conn, ERR, "Not authenticated")
+
 				continue
 			}
 
-			// TODO: Implement later
-			messageCount := 0
+			messageCount := len(dummyMail)
 			size := 0
+			for _, mail := range dummyMail {
+				size += mail.Size()
+			}
 
-			writer.WriteString(OK + " " +
-				strconv.Itoa(messageCount) + " " +
-				strconv.Itoa(size) + "\r\n",
-			)
+			reply(conn, OK, fmt.Sprintf("%d %d", messageCount, size))
+
+			continue
 		case POP3_COMMAND_LIST:
+			if !state.isAuthenticated {
+				reply(conn, ERR, "Not authenticated")
+
+				continue
+			}
+
+			reply(conn, OK, fmt.Sprintf(""))
+
+			// // check if has a argument
+			// if command.Args != "" {
+			// 	// get specific mail
+			// 	index, err := strconv.Atoi(command.Args)
+			// 	if err != nil {
+			// 		reply(conn, ERR, "Invalid message number")
+			// 	}
+
+			// 	if index < 1 || index > len(dummyMail) {
+			// 		reply(conn, ERR, "No such message")
+			// 	}
+
+			// 	replyWithoutStatus(conn, fmt.Sprintf("%d %d", index, dummyMail[index-1].Size()))
+
+			// 	continue
+			// }
+
+			var messages []string
+			for i, mail := range dummyMail {
+				messages = append(messages, fmt.Sprintf("%d %d", i+1, mail.Size()))
+			}
+
+			replyMultiline(conn, messages, true)
+
+			continue
 		case POP3_COMMAND_RETR:
+			if !state.isAuthenticated {
+				reply(conn, ERR, "Not authenticated")
+
+				continue
+			}
+
+			index, err := strconv.Atoi(command.Args)
+			if err != nil {
+				reply(conn, ERR, "Invalid message number")
+			}
+
+			if index < 1 || index > len(dummyMail) {
+				reply(conn, ERR, "No such message")
+			}
+
+			mail := dummyMail[index-1]
+
+			reply(conn, OK, string(rune(mail.Size())))
+
+			replyWithoutStatus(conn, mail.String())
+			replyWithoutStatus(conn, ".")
 		case POP3_COMMAND_NOOP:
+			reply(conn, OK, "NOOP")
+
+			continue
 		case POP3_COMMAND_DELE:
 		case POP3_COMMAND_RSET:
 		case POP3_COMMAND_QUIT:
 		default:
-			writer.WriteString(ERR + " Unknown command\r\n")
+			reply(conn, ERR, "Unknown command")
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
 		log.Println("Error reading from client:", err)
+	}
+}
+
+func reply(conn net.Conn, status string, message string) {
+	fmt.Fprintf(conn, "%s %s\r\n", status, message)
+
+	log.Printf("Server: %s %s", status, message)
+}
+
+func replyWithoutStatus(conn net.Conn, message string) {
+	fmt.Fprintf(conn, "%s\r\n", message)
+
+	log.Printf("Server: %s", message)
+}
+
+func replyMultiline(conn net.Conn, messages []string, end bool) {
+	for _, message := range messages {
+		replyWithoutStatus(conn, fmt.Sprintf("%s", message))
+	}
+
+	if end {
+		replyWithoutStatus(conn, ".")
 	}
 }
