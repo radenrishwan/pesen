@@ -6,5 +6,5 @@ video : `soon`
 - [x] SMTP server
 - [ ] SMTP client (still using a std for example)
 - [x] Authentication
-- [ ] POP3
+- [x] POP3
 - [ ] IMAP
